@@ -1,0 +1,6 @@
+# Port diambil dari .env (APP_PORT) agar selalu sinkron dengan config.Load()
+@baseUrl = http://localhost:{{$dotenv APP_PORT}}
+
+### Health check — cek server & koneksi database
+GET {{baseUrl}}/health
+Accept: application/json
