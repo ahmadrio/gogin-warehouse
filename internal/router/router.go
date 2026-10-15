@@ -5,9 +5,23 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+
+	"warehouse-management/internal/auth"
+	"warehouse-management/internal/config"
+	"warehouse-management/internal/handler"
+	"warehouse-management/internal/repository"
+	"warehouse-management/internal/service"
 )
 
-func New(db *gorm.DB) *gin.Engine {
+func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
+	// ---- 1. Susun dependency: repository -> service -> handler ----
+	tokens := auth.NewTokenManager(cfg.JWT.Secret, cfg.JWT.TTL)
+
+	userRepo := repository.NewUserRepository(db)
+	authService := service.NewAuthService(userRepo, tokens)
+	authHandler := handler.NewAuthHandler(authService)
+
+	// ---- 2. Daftarkan route ----
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
@@ -17,7 +31,11 @@ func New(db *gorm.DB) *gin.Engine {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "down"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"status": "oke"})
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
+
+	v1 := r.Group("/api/v1")
+	v1.POST("/auth/login", authHandler.Login)
+
 	return r
 }

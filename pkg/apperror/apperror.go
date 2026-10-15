@@ -7,48 +7,28 @@ import (
 )
 
 type AppError struct {
-	Status  int               `json:"-"`
-	Message string            `json:"message"`
-	Details map[string]string `json:"errors,omitempty"`
+	Status  int    `json:"-"`
+	Message string `json:"message"`
+	Details any    `json:"errors,omitempty"`
 }
 
-func (e *AppError) Error() string {
-	return e.Message
-}
+func (e *AppError) Error() string { return e.Message }
 
 func New(status int, message string) *AppError {
-	return &AppError{
-		Status:  status,
-		Message: message,
-	}
+	return &AppError{Status: status, Message: message}
 }
 
-func BadRequest(message string) *AppError {
-	return New(http.StatusBadRequest, message)
-}
-
-func Unauthorized(message string) *AppError {
-	return New(http.StatusUnauthorized, message)
-}
-
-func Forbidden(message string) *AppError {
-	return New(http.StatusForbidden, message)
-}
-
-func Conflict(message string) *AppError {
-	return New(http.StatusConflict, message)
-}
+func BadRequest(msg string) *AppError   { return New(http.StatusBadRequest, msg) }
+func Unauthorized(msg string) *AppError { return New(http.StatusUnauthorized, msg) }
+func Forbidden(msg string) *AppError    { return New(http.StatusForbidden, msg) }
+func Conflict(msg string) *AppError     { return New(http.StatusConflict, msg) }
 
 func NotFound(entity string) *AppError {
-	return New(http.StatusNotFound, fmt.Sprintf("%s not found", entity))
+	return New(http.StatusNotFound, fmt.Sprintf("%s tidak ditemukan", entity))
 }
 
-func ValidationError(details map[string]string) *AppError {
-	return &AppError{
-		Status:  http.StatusUnprocessableEntity,
-		Message: "Invalid input",
-		Details: details,
-	}
+func Validation(details map[string]string) *AppError {
+	return &AppError{Status: http.StatusUnprocessableEntity, Message: "data tidak valid", Details: details}
 }
 
 func As(err error) (*AppError, bool) {

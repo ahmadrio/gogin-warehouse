@@ -1,6 +1,70 @@
 # Port diambil dari .env (APP_PORT) agar selalu sinkron dengan config.Load()
 @baseUrl = http://localhost:{{$dotenv APP_PORT}}
+# Password default semua user hasil seeder (cmd/seed)
+@password = password123
 
 ### Health check — cek server & koneksi database
 GET {{baseUrl}}/health
 Accept: application/json
+
+### Login superadmin — akses semua gudang
+# Token bisa dipakai request lain: {{login.response.body.$.data.access_token}}
+# @name login
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "superadmin@warehouse.test",
+  "password": "{{password}}"
+}
+
+### Login supervisor — akses WH-MALANG-01 & WH-SURABAYA-01
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "supervisor@warehouse.test",
+  "password": "{{password}}"
+}
+
+### Login staff Malang — akses WH-MALANG-01 saja
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "staff.malang@warehouse.test",
+  "password": "{{password}}"
+}
+
+### Login staff Surabaya — akses WH-SURABAYA-01 saja
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "staff.surabaya@warehouse.test",
+  "password": "{{password}}"
+}
+
+### Login gagal: password salah — harapan 401 "email atau password salah"
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "superadmin@warehouse.test",
+  "password": "salah-password"
+}
+
+### Login gagal: validasi — harapan 422 dengan errors.email & errors.password
+POST {{baseUrl}}/api/v1/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "email": "bukan-email",
+  "password": ""
+}
