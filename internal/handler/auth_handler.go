@@ -39,7 +39,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	})
 }
 
-// GET /api/v1/auth/me (route-nya didaftarkan di Tahap 10)
+// GET /api/v1/auth/me (wajib login, lewat middleware.Authenticate)
 func (h *AuthHandler) Me(c *gin.Context) {
 	response.OK(c, dto.NewMeResponse(auth.CurrentUser(c)))
 }

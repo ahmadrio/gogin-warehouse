@@ -8,7 +8,7 @@ GET {{baseUrl}}/health
 Accept: application/json
 
 ### Login superadmin — akses semua gudang
-# Token bisa dipakai request lain: {{login.response.body.$.data.access_token}}
+# Token dipakai request /auth/me di bawah: {{login.response.body.$.data.access_token}}
 # @name login
 POST {{baseUrl}}/api/v1/auth/login
 Content-Type: application/json
@@ -20,6 +20,7 @@ Accept: application/json
 }
 
 ### Login supervisor — akses WH-MALANG-01 & WH-SURABAYA-01
+# @name loginSupervisor
 POST {{baseUrl}}/api/v1/auth/login
 Content-Type: application/json
 Accept: application/json
@@ -30,6 +31,7 @@ Accept: application/json
 }
 
 ### Login staff Malang — akses WH-MALANG-01 saja
+# @name loginStaffMalang
 POST {{baseUrl}}/api/v1/auth/login
 Content-Type: application/json
 Accept: application/json
@@ -40,6 +42,7 @@ Accept: application/json
 }
 
 ### Login staff Surabaya — akses WH-SURABAYA-01 saja
+# @name loginStaffSurabaya
 POST {{baseUrl}}/api/v1/auth/login
 Content-Type: application/json
 Accept: application/json
@@ -68,3 +71,42 @@ Accept: application/json
   "email": "bukan-email",
   "password": ""
 }
+
+# =====================================================================
+# Route terproteksi — lewat middleware.Authenticate
+# Jalankan request login yang sesuai dulu agar token-nya tersedia.
+# =====================================================================
+
+### Me superadmin — harapan 200, all_warehouses true
+GET {{baseUrl}}/api/v1/auth/me
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Me supervisor — harapan 200, warehouse_ids berisi 2 gudang
+GET {{baseUrl}}/api/v1/auth/me
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Me staff Malang — harapan 200, warehouse_ids berisi WH-MALANG-01 saja
+GET {{baseUrl}}/api/v1/auth/me
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Me staff Surabaya — harapan 200, warehouse_ids berisi WH-SURABAYA-01 saja
+GET {{baseUrl}}/api/v1/auth/me
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### Me gagal: tanpa header Authorization — harapan 401 "token tidak ditemukan"
+GET {{baseUrl}}/api/v1/auth/me
+Accept: application/json
+
+### Me gagal: tanpa prefix "Bearer " — harapan 401 "token tidak ditemukan"
+GET {{baseUrl}}/api/v1/auth/me
+Accept: application/json
+Authorization: {{login.response.body.$.data.access_token}}
+
+### Me gagal: token rusak — harapan 401 "token tidak valid atau sudah kedaluwarsa"
+GET {{baseUrl}}/api/v1/auth/me
+Accept: application/json
+Authorization: Bearer ini.bukan.jwt
