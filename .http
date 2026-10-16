@@ -110,3 +110,227 @@ Authorization: {{login.response.body.$.data.access_token}}
 GET {{baseUrl}}/api/v1/auth/me
 Accept: application/json
 Authorization: Bearer ini.bukan.jwt
+
+# =====================================================================
+# Product categories — /api/v1/product-categories
+# Read: semua role. Create/Update/Delete: superadmin saja.
+# Urutan jalankan: Create -> Get/Update -> Delete (bisa diulang, kode
+# kategori yang sudah dihapus boleh dipakai lagi).
+# =====================================================================
+
+### List kategori — harapan 200, data + meta (page, per_page, total, total_pages)
+GET {{baseUrl}}/api/v1/product-categories?page=1&per_page=15
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List kategori dengan search — cocokkan code/name (ILIKE)
+GET {{baseUrl}}/api/v1/product-categories?search=elek
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Create kategori — harapan 201, is_active default true
+# ID-nya dipakai request di bawah: {{createCategory.response.body.$.data.id}}
+# @name createCategory
+POST {{baseUrl}}/api/v1/product-categories
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "ELEKTRONIK",
+  "name": "Elektronik",
+  "description": "Barang elektronik rumah tangga"
+}
+
+### Get kategori by id — harapan 200
+GET {{baseUrl}}/api/v1/product-categories/{{createCategory.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get kategori sebagai staff — harapan 200 (staff punya product_categories:read)
+GET {{baseUrl}}/api/v1/product-categories/{{createCategory.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Update kategori — harapan 200, is_active wajib dikirim
+PUT {{baseUrl}}/api/v1/product-categories/{{createCategory.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "ELEKTRONIK",
+  "name": "Elektronik & Gadget",
+  "description": "Elektronik rumah tangga dan gadget",
+  "is_active": false
+}
+
+### Create kategori gagal: kode duplikat — harapan 409 "kode kategori sudah dipakai"
+POST {{baseUrl}}/api/v1/product-categories
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "ELEKTRONIK",
+  "name": "Elektronik Lagi"
+}
+
+### Create kategori gagal: validasi — harapan 422 dengan errors.code & errors.name
+POST {{baseUrl}}/api/v1/product-categories
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "",
+  "name": ""
+}
+
+### Update kategori gagal: tanpa is_active — harapan 422 dengan errors.is_active
+PUT {{baseUrl}}/api/v1/product-categories/{{createCategory.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "ELEKTRONIK",
+  "name": "Elektronik"
+}
+
+### Create kategori gagal: staff — harapan 403 "anda tidak memiliki akses: product_categories:create"
+POST {{baseUrl}}/api/v1/product-categories
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "code": "MAKANAN",
+  "name": "Makanan"
+}
+
+### Delete kategori gagal: supervisor — harapan 403 "anda tidak memiliki akses: product_categories:delete"
+DELETE {{baseUrl}}/api/v1/product-categories/{{createCategory.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Get kategori gagal: id bukan UUID — harapan 400 "id harus berupa UUID"
+GET {{baseUrl}}/api/v1/product-categories/123
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get kategori gagal: UUID tidak ada — harapan 404 "kategori produk tidak ditemukan"
+GET {{baseUrl}}/api/v1/product-categories/{{$guid}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Delete kategori — harapan 204 (soft delete)
+DELETE {{baseUrl}}/api/v1/product-categories/{{createCategory.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get kategori setelah dihapus — harapan 404 "kategori produk tidak ditemukan"
+GET {{baseUrl}}/api/v1/product-categories/{{createCategory.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# =====================================================================
+# Warehouses — /api/v1/warehouses
+# Read: semua role, tapi data dibatasi gudang milik user (WarehouseScope).
+# Create: superadmin saja. Gudang di luar scope dianggap tidak ada (404).
+# =====================================================================
+
+### List warehouse superadmin — harapan 200, semua gudang (minimal 3 dari seeder)
+GET {{baseUrl}}/api/v1/warehouses
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List warehouse supervisor — harapan 200, total 2 (Malang & Surabaya-01)
+GET {{baseUrl}}/api/v1/warehouses
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### List warehouse staff Malang — harapan 200, total 1 (WH-MALANG-01)
+GET {{baseUrl}}/api/v1/warehouses
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Cari WH-SURABAYA-01 — ID-nya dipakai request di bawah
+# @name whSurabaya
+GET {{baseUrl}}/api/v1/warehouses?search=WH-SURABAYA-01
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get warehouse by id — harapan 200
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List lokasi warehouse — harapan 200, RAK-B-01..RAK-B-03
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get warehouse sebagai supervisor — harapan 200 (Surabaya-01 ada di scope-nya)
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Get warehouse gagal: staff Malang buka gudang Surabaya — harapan 404 "warehouse tidak ditemukan"
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### List lokasi gagal: staff Malang buka gudang Surabaya — harapan 404 "warehouse tidak ditemukan"
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Get warehouse gagal: id bukan UUID — harapan 400 "id harus berupa UUID"
+GET {{baseUrl}}/api/v1/warehouses/bukan-uuid
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Create warehouse — harapan 201 (dijalankan kedua kali -> 409, belum ada endpoint delete)
+POST {{baseUrl}}/api/v1/warehouses
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "WH-SIDOARJO-01",
+  "name": "Gudang Sidoarjo Waru",
+  "address": "Jl. Raya Waru No. 1, Sidoarjo"
+}
+
+### Create warehouse gagal: kode duplikat — harapan 409 "kode warehouse sudah dipakai"
+POST {{baseUrl}}/api/v1/warehouses
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "WH-MALANG-01",
+  "name": "Gudang Malang Duplikat"
+}
+
+### Create warehouse gagal: validasi — harapan 422 dengan errors.code & errors.name
+POST {{baseUrl}}/api/v1/warehouses
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "address": "Tanpa kode dan nama"
+}
+
+### Create warehouse gagal: supervisor — harapan 403 "anda tidak memiliki akses: warehouses:create"
+POST {{baseUrl}}/api/v1/warehouses
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "code": "WH-GRESIK-01",
+  "name": "Gudang Gresik"
+}

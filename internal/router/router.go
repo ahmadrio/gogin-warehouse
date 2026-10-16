@@ -19,8 +19,17 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	tokens := auth.NewTokenManager(cfg.JWT.Secret, cfg.JWT.TTL)
 
 	userRepo := repository.NewUserRepository(db)
+	auditRepo := repository.NewAuditRepository(db)
+	categoryRepo := repository.NewProductCategoryRepository(db)
+	warehouseRepo := repository.NewWarehouseRepository(db)
+
 	authService := service.NewAuthService(userRepo, tokens)
+	categoryService := service.NewProductCategoryService(db, categoryRepo, auditRepo)
+	warehouseService := service.NewWarehouseService(db, warehouseRepo, auditRepo)
+
 	authHandler := handler.NewAuthHandler(authService)
+	categoryHandler := handler.NewProductCategoryHandler(categoryService)
+	warehouseHandler := handler.NewWarehouseHandler(warehouseService)
 
 	// ---- 2. Daftarkan route ----
 	r := gin.New()
@@ -45,6 +54,28 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	protected.Use(middleware.Authenticate(tokens, authService))
 
 	protected.GET("/auth/me", authHandler.Me)
+
+	// can() hanya singkatan agar daftar route mudah dibaca
+	can := func(resource, operation string) gin.HandlerFunc {
+		return middleware.RequirePermission(auth.Perm(resource, operation))
+	}
+
+	categories := protected.Group("/product-categories")
+	{
+		categories.GET("", can(auth.ResProductCategories, auth.OpRead), categoryHandler.List)
+		categories.GET("/:id", can(auth.ResProductCategories, auth.OpRead), categoryHandler.Get)
+		categories.POST("", can(auth.ResProductCategories, auth.OpCreate), categoryHandler.Create)
+		categories.PUT("/:id", can(auth.ResProductCategories, auth.OpUpdate), categoryHandler.Update)
+		categories.DELETE("/:id", can(auth.ResProductCategories, auth.OpDelete), categoryHandler.Delete)
+	}
+
+	warehouses := protected.Group("/warehouses")
+	{
+		warehouses.GET("", can(auth.ResWarehouses, auth.OpRead), warehouseHandler.List)
+		warehouses.GET("/:id", can(auth.ResWarehouses, auth.OpRead), warehouseHandler.Get)
+		warehouses.GET("/:id/locations", can(auth.ResWarehouseLocations, auth.OpRead), warehouseHandler.ListLocations)
+		warehouses.POST("", can(auth.ResWarehouses, auth.OpCreate), warehouseHandler.Create)
+	}
 
 	return r
 }
