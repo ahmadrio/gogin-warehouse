@@ -22,14 +22,17 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	auditRepo := repository.NewAuditRepository(db)
 	categoryRepo := repository.NewProductCategoryRepository(db)
 	warehouseRepo := repository.NewWarehouseRepository(db)
+	stockRepo := repository.NewStockRepository(db)
 
 	authService := service.NewAuthService(userRepo, tokens)
 	categoryService := service.NewProductCategoryService(db, categoryRepo, auditRepo)
 	warehouseService := service.NewWarehouseService(db, warehouseRepo, auditRepo)
+	stockService := service.NewStockService(stockRepo)
 
 	authHandler := handler.NewAuthHandler(authService)
 	categoryHandler := handler.NewProductCategoryHandler(categoryService)
 	warehouseHandler := handler.NewWarehouseHandler(warehouseService)
+	stockHandler := handler.NewStockHandler(stockService)
 
 	// ---- 2. Daftarkan route ----
 	r := gin.New()
@@ -76,6 +79,8 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		warehouses.GET("/:id/locations", can(auth.ResWarehouseLocations, auth.OpRead), warehouseHandler.ListLocations)
 		warehouses.POST("", can(auth.ResWarehouses, auth.OpCreate), warehouseHandler.Create)
 	}
+
+	protected.GET("/stocks", can(auth.ResStocks, auth.OpRead), stockHandler.List)
 
 	return r
 }

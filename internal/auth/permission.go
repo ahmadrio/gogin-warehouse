@@ -20,6 +20,7 @@ const (
 	ResOutbounds          = "outbounds"
 	ResStockTransfers     = "stock_transfers"
 	ResStockAdjustments   = "stock_adjustments"
+	ResStocks             = "stocks"
 	ResReports            = "reports"
 	ResDashboard          = "dashboard"
 	ResAuditTrails        = "audit_trails"
@@ -51,6 +52,7 @@ var AllResources = []string{
 	ResOutbounds,
 	ResStockTransfers,
 	ResStockAdjustments,
+	ResStocks,
 	ResReports,
 	ResDashboard,
 	ResAuditTrails,

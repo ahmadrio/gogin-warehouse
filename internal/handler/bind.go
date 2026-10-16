@@ -76,3 +76,17 @@ func toSnakeCase(s string) string {
 	}
 	return strings.ToLower(b.String())
 }
+
+// queryUUID membaca query string opsional (mis. ?warehouse_id=) sebagai UUID.
+// Tidak dikirim -> nil (tidak memfilter). Dikirim tapi bukan UUID -> 400.
+func queryUUID(c *gin.Context, name string) (*uuid.UUID, error) {
+	raw := c.Query(name)
+	if raw == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return nil, apperror.BadRequest(name + " harus berupa UUID")
+	}
+	return &id, nil
+}

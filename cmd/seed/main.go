@@ -39,6 +39,9 @@ func main() {
 		if err != nil {
 			return err
 		}
+		if err := seedProducts(tx); err != nil { // <- tambahkan
+			return err
+		}
 		return seedUsers(tx, roles, warehouses)
 	})
 	if err != nil {
@@ -192,6 +195,37 @@ func seedUsers(tx *gorm.DB, roles map[string]model.Role, warehouses map[string]m
 			}
 		}
 		log.Printf("user: %-32s role: %-10s password: %s", u.Email, u.Role, defaultPassword)
+	}
+	return nil
+}
+
+// seedProducts membuat kategori & produk contoh agar transaksi stok bisa langsung dicoba.
+func seedProducts(tx *gorm.DB) error {
+	data := []struct {
+		CategoryCode, CategoryName string
+		Products                   []model.Product
+	}{
+		{"ELK", "Elektronik", []model.Product{
+			{SKU: "LP-001", Name: "Laptop 14 inch", Unit: "pcs", MinimumStock: 5},
+			{SKU: "TB-001", Name: "Tablet 10 inch", Unit: "pcs", MinimumStock: 5},
+		}},
+		{"FUR", "Furnitur", []model.Product{
+			{SKU: "MJ-001", Name: "Meja Kerja", Unit: "pcs", MinimumStock: 2},
+		}},
+	}
+
+	for _, d := range data {
+		cat := model.ProductCategory{Code: d.CategoryCode, Name: d.CategoryName, IsActive: true}
+		if err := tx.Where("code = ?", d.CategoryCode).FirstOrCreate(&cat).Error; err != nil {
+			return err
+		}
+		for _, p := range d.Products {
+			p.ProductCategoryID = cat.ID
+			p.IsActive = true
+			if err := tx.Where("sku = ?", p.SKU).FirstOrCreate(&p).Error; err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
