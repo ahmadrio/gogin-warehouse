@@ -1139,14 +1139,1291 @@ Accept: application/json
 Authorization: Bearer {{login.response.body.$.data.access_token}}
 
 # =====================================================================
+# Inbounds — /api/v1/inbounds (barang masuk dari supplier)
+# Staff: create, read, revisi (hanya pembuatnya), putaway. Supervisor: read,
+# approve, reject. Superadmin: semua. Data dibatasi gudang milik user (WarehouseScope).
+# Status: pending -> approved -> completed (putaway) | rejected -> revisi -> pending lagi.
+# Rak TIDAK dikirim saat create. Approve juga belum mengubah stok; stok baru
+# bertambah saat putaway, yaitu saat staff menentukan rak untuk SETIAP item.
+# Jalankan dulu: semua login, "Cari WH-MALANG-01", "Cari WH-SURABAYA-01",
+# "List lokasi warehouse" (Surabaya), "Cari produk LP-001", dan 2 request
+# persiapan di section Stock adjustments. Alur bisa diulang (nomor INB baru tiap create).
+# =====================================================================
+
+# ---- Alur A: terima barang -> revisi -> approve -> putaway (staff Surabaya) ----
+
+### Create in-bound (staff Surabaya) — harapan 201, status pending, reference_number INB-YYYYMM-NNNN, warehouse_location_id item null
+# @name createInbound
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whSurabaya.response.body.$.data[0].id}}",
+  "purchase_order_number": "PO-2026-10-001",
+  "notes": "Kiriman supplier PT Sumber Elektronik",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 30,
+      "notes": "Dus segel"
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "quantity": 15
+    }
+  ]
+}
+
+### List in-bound staff Surabaya — harapan 200, hanya pengajuan WH-SURABAYA-01, terbaru dulu
+GET {{baseUrl}}/api/v1/inbounds?page=1&per_page=15
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### List in-bound supervisor — filter warehouse_id + status=pending
+GET {{baseUrl}}/api/v1/inbounds?warehouse_id={{whSurabaya.response.body.$.data[0].id}}&status=pending
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### List in-bound dengan search — cocokkan reference_number (ILIKE)
+GET {{baseUrl}}/api/v1/inbounds?search={{createInbound.response.body.$.data.reference_number}}
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Get in-bound by id — harapan 200, items berisi product, warehouse_location belum ada
+GET {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### Get in-bound gagal: staff Malang buka pengajuan Surabaya — harapan 404 "in-bound tidak ditemukan"
+GET {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Revisi in-bound (staff Surabaya, pembuat) — harapan 200, tetap pending, item lama diganti
+# warehouse_id tidak perlu dikirim: gudang tidak bisa diganti saat revisi.
+PUT {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "purchase_order_number": "PO-2026-10-001",
+  "notes": "Kiriman supplier PT Sumber Elektronik (1 dus laptop kurang)",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 25,
+      "notes": "Datang 25 dari 30"
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "quantity": 15
+    }
+  ]
+}
+
+### Revisi gagal: bukan pembuat (superadmin) — harapan 403 "hanya pembuat pengajuan yang bisa merevisi"
+PUT {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "notes": "Diubah superadmin",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Putaway gagal: masih pending — harapan 409 "putaway hanya untuk in-bound approved (status: pending)"
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{$guid}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}"
+    }
+  ]
+}
+
+### Approve gagal: staff — harapan 403 "anda tidak memiliki akses: inbounds:approve"
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### Approve (supervisor) — harapan 200, status approved; stok BELUM berubah (menunggu putaway)
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Approve ulang — harapan 409 "hanya in-bound pending yang bisa di-approve (status: approved)"
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Revisi gagal: sudah approved — harapan 409 "in-bound berstatus approved tidak bisa diubah (BR-009)"
+PUT {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "notes": "Coba ubah setelah approved",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Reject gagal: sudah approved — harapan 409 "hanya in-bound pending yang bisa di-reject (status: approved)"
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Terlambat ditolak"
+}
+
+### Detail in-bound sebelum putaway — ID item dipakai request putaway di bawah
+# ID item berganti setiap revisi, jadi diambil ulang di sini (bukan dari createInbound).
+# @name inboundDetail
+GET {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### Putaway gagal: supervisor — harapan 403 "anda tidak memiliki akses: inbounds:update"
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}"
+    }
+  ]
+}
+
+### Putaway gagal: validasi — harapan 422 dengan errors.items "wajib diisi"
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{}
+
+### Putaway gagal: belum semua item diberi rak — harapan 422 errors.items "semua item harus diberi rak (<SKU> belum)"
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}"
+    }
+  ]
+}
+
+### Putaway gagal: rak milik gudang lain (RAK-A-01 Malang) — harapan 422 errors.items[0].warehouse_location_id
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}"
+    },
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[1].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[1].id}}"
+    }
+  ]
+}
+
+### Putaway gagal: item bukan milik in-bound ini — harapan 422 errors.items[1].inbound_item_id "bukan item dari in-bound ini"
+# errors.items juga muncul karena item kedua yang asli jadi belum diberi rak.
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}"
+    },
+    {
+      "inbound_item_id": "{{$guid}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[1].id}}"
+    }
+  ]
+}
+
+### Putaway (staff Surabaya) — harapan 200, status completed, putaway_at terisi, warehouse_location tiap item terisi
+# items[0] ke RAK-B-01, items[1] ke RAK-B-02; stok di kedua rak bertambah sesuai quantity item.
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}"
+    },
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[1].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[1].id}}"
+    }
+  ]
+}
+
+### Putaway ulang — harapan 409 "putaway hanya untuk in-bound approved (status: completed)"
+POST {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}"
+    },
+    {
+      "inbound_item_id": "{{inboundDetail.response.body.$.data.items[1].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[1].id}}"
+    }
+  ]
+}
+
+### Revisi gagal: sudah completed — harapan 409 "in-bound berstatus completed tidak bisa diubah (BR-009)"
+PUT {{baseUrl}}/api/v1/inbounds/{{createInbound.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+{
+  "notes": "Coba ubah setelah putaway",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### List in-bound status completed — harapan 200, berisi in-bound yang sudah di-putaway
+GET {{baseUrl}}/api/v1/inbounds?status=completed
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Stok WH-SURABAYA-01 setelah putaway — harapan 200, LP-001 & TB-001 ada di RAK-B-01 / RAK-B-02
+GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whSurabaya.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+# ---- Alur B: ditolak -> revisi -> pending lagi (staff Malang) ----
+
+### Create in-bound tanpa nomor PO (staff Malang) — harapan 201, purchase_order_number null
+# @name createInboundMalang
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "notes": "Retur dari toko cabang",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 10
+    }
+  ]
+}
+
+### Reject gagal: tanpa rejection_note — harapan 422 dengan errors.rejection_note
+POST {{baseUrl}}/api/v1/inbounds/{{createInboundMalang.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{}
+
+### Reject (supervisor) — harapan 200, status rejected, rejection_note terisi
+POST {{baseUrl}}/api/v1/inbounds/{{createInboundMalang.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Nomor PO wajib dicantumkan"
+}
+
+### Putaway gagal: status rejected — harapan 409 "putaway hanya untuk in-bound approved (status: rejected)"
+POST {{baseUrl}}/api/v1/inbounds/{{createInboundMalang.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{createInboundMalang.response.body.$.data.items[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}"
+    }
+  ]
+}
+
+### Revisi setelah ditolak (staff Malang) — harapan 200, status kembali pending, rejection_note null
+PUT {{baseUrl}}/api/v1/inbounds/{{createInboundMalang.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "purchase_order_number": "PO-2026-10-002",
+  "notes": "Retur dari toko cabang",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 10
+    }
+  ]
+}
+
+# ---- Alur C: isi stok WH-SURABAYA-02 (superadmin) ----
+# Dipakai section Stocks untuk membuktikan supervisor tidak melihat gudang di luar scope-nya.
+
+### Cari WH-SURABAYA-02 — hanya superadmin yang punya akses ke gudang ini
+# @name whSurabaya2
+GET {{baseUrl}}/api/v1/warehouses?search=WH-SURABAYA-02
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List lokasi WH-SURABAYA-02 — data[0] RAK-C-01
+# @name locSurabaya2
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya2.response.body.$.data[0].id}}/locations
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Create in-bound di WH-SURABAYA-02 (superadmin) — harapan 201
+# @name createInboundSby2
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whSurabaya2.response.body.$.data[0].id}}",
+  "purchase_order_number": "PO-2026-10-003",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 8
+    }
+  ]
+}
+
+### Approve in-bound WH-SURABAYA-02 (superadmin) — harapan 200, status approved
+POST {{baseUrl}}/api/v1/inbounds/{{createInboundSby2.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Putaway in-bound WH-SURABAYA-02 ke RAK-C-01 (superadmin) — harapan 200, status completed
+POST {{baseUrl}}/api/v1/inbounds/{{createInboundSby2.response.body.$.data.id}}/putaway
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "inbound_item_id": "{{createInboundSby2.response.body.$.data.items[0].id}}",
+      "warehouse_location_id": "{{locSurabaya2.response.body.$.data[0].id}}"
+    }
+  ]
+}
+
+# ---- Kasus gagal lainnya ----
+
+### Create in-bound gagal: tanpa item — harapan 422 errors.items "minimal 1 item"
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": []
+}
+
+### Create in-bound gagal: validasi item — harapan 422 dengan errors.items[0].product_id & errors.items[0].quantity
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "quantity": 0
+    }
+  ]
+}
+
+### Create in-bound gagal: tanpa warehouse_id — harapan 422 dengan errors.warehouse_id
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create in-bound gagal: produk sama dua kali — harapan 422 errors.items[1] "produk yang sama sudah ada di item lain"
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 1
+    },
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 2
+    }
+  ]
+}
+
+### Create in-bound gagal: produk tidak ada — harapan 422 errors.items[0].product_id "produk tidak ditemukan atau tidak aktif"
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{$guid}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create in-bound gagal: staff Malang ke gudang Surabaya — harapan 404 "warehouse tidak ditemukan"
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whSurabaya.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create in-bound gagal: supervisor — harapan 403 "anda tidak memiliki akses: inbounds:create"
+POST {{baseUrl}}/api/v1/inbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Get in-bound gagal: id bukan UUID — harapan 400 "id harus berupa UUID"
+GET {{baseUrl}}/api/v1/inbounds/INB-202610-0001
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get in-bound gagal: UUID tidak ada — harapan 404 "in-bound tidak ditemukan"
+GET {{baseUrl}}/api/v1/inbounds/{{$guid}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List in-bound gagal: warehouse_id bukan UUID — harapan 400 "warehouse_id harus berupa UUID"
+GET {{baseUrl}}/api/v1/inbounds?warehouse_id=WH-SURABAYA-01
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# =====================================================================
+# Outbounds — /api/v1/outbounds (barang keluar ke customer)
+# Staff: create, read, revisi (hanya pembuatnya). Supervisor: read, approve, reject.
+# Superadmin: semua. Data dibatasi gudang milik user (WarehouseScope).
+# Status: pending -> approved (stok berkurang) | rejected -> revisi -> pending lagi.
+# Rak asal wajib diisi per item; quantity selalu positif dan selalu mengurangi stok.
+# Stok HANYA berubah saat approve; stok tidak cukup = 422 dan semua item rollback.
+# Memakai stok WH-MALANG-01 hasil section Stock adjustments (LP-001@RAK-A-01,
+# TB-001@RAK-A-02); prasyaratnya sama dengan section Inbounds.
+# Alur bisa diulang (nomor OUT baru tiap create) selama stoknya masih cukup.
+# =====================================================================
+
+# ---- Alur A: kirim barang -> revisi -> approve ----
+
+### Create out-bound (staff Malang) — harapan 201, status pending, reference_number OUT-YYYYMM-NNNN
+# @name createOutbound
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "notes": "Pengiriman ke Toko Sinar Jaya Malang",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 5,
+      "notes": "Order SO-1001"
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[1].id}}",
+      "quantity": 3
+    }
+  ]
+}
+
+### List out-bound staff Malang — harapan 200, hanya pengajuan WH-MALANG-01, terbaru dulu
+GET {{baseUrl}}/api/v1/outbounds?page=1&per_page=15
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### List out-bound supervisor — filter warehouse_id + status=pending
+GET {{baseUrl}}/api/v1/outbounds?warehouse_id={{whMalang.response.body.$.data[0].id}}&status=pending
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### List out-bound dengan search — cocokkan reference_number (ILIKE)
+GET {{baseUrl}}/api/v1/outbounds?search={{createOutbound.response.body.$.data.reference_number}}
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Get out-bound by id — harapan 200, items berisi product & warehouse_location
+GET {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Get out-bound gagal: staff Surabaya buka pengajuan Malang — harapan 404 "out-bound tidak ditemukan"
+GET {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### Revisi out-bound (staff Malang, pembuat) — harapan 200, tetap pending, item lama diganti
+# warehouse_id tidak perlu dikirim: gudang tidak bisa diganti saat revisi.
+PUT {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "notes": "Pengiriman ke Toko Sinar Jaya Malang (order direvisi)",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 4,
+      "notes": "Order SO-1001, jadi 4 unit"
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[1].id}}",
+      "quantity": 3
+    }
+  ]
+}
+
+### Revisi gagal: bukan pembuat (superadmin) — harapan 403 "hanya pembuat pengajuan yang bisa merevisi"
+PUT {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "notes": "Diubah superadmin",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Approve gagal: staff — harapan 403 "anda tidak memiliki akses: outbounds:approve"
+POST {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Approve (supervisor) — harapan 200, status approved; stok LP-001@RAK-A-01 -4, TB-001@RAK-A-02 -3
+POST {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Approve ulang — harapan 409 "hanya out-bound pending yang bisa di-approve (status: approved)"
+POST {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Revisi gagal: sudah approved — harapan 409 "out-bound yang sudah approved tidak bisa diubah (BR-009)"
+PUT {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "notes": "Coba ubah setelah approved",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Reject gagal: sudah approved — harapan 409 "hanya out-bound pending yang bisa di-reject (status: approved)"
+POST {{baseUrl}}/api/v1/outbounds/{{createOutbound.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Terlambat ditolak"
+}
+
+### Stok WH-MALANG-01 setelah approve — harapan 200, LP-001@RAK-A-01 & TB-001@RAK-A-02 berkurang
+GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whMalang.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+# ---- Alur B: stok tidak cukup -> approve gagal (rollback) -> reject -> revisi -> approve ----
+
+### Create out-bound melebihi stok (staff Malang) — harapan 201 (stok belum dicek saat create)
+# @name createOutboundOver
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "notes": "Order grosir",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 2
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[1].id}}",
+      "quantity": 100000
+    }
+  ]
+}
+
+### Approve gagal: stok tidak cukup — harapan 422 "stok tidak cukup untuk TB-001 di RAK-A-02: tersedia N, dibutuhkan 100000"
+# Status tetap pending, dan stok LP-001 juga tidak berkurang (semua item rollback).
+POST {{baseUrl}}/api/v1/outbounds/{{createOutboundOver.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Reject gagal: tanpa rejection_note — harapan 422 dengan errors.rejection_note
+POST {{baseUrl}}/api/v1/outbounds/{{createOutboundOver.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{}
+
+### Reject (supervisor) — harapan 200, status rejected, rejection_note terisi
+POST {{baseUrl}}/api/v1/outbounds/{{createOutboundOver.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Stok TB-001 tidak cukup, kurangi jumlahnya"
+}
+
+### Revisi setelah ditolak (staff Malang) — harapan 200, status kembali pending, rejection_note null
+PUT {{baseUrl}}/api/v1/outbounds/{{createOutboundOver.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "notes": "Order grosir (disesuaikan stok)",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 2
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[1].id}}",
+      "quantity": 2
+    }
+  ]
+}
+
+### Approve revisi (supervisor) — harapan 200, status approved; stok LP-001@RAK-A-01 -2, TB-001@RAK-A-02 -2
+POST {{baseUrl}}/api/v1/outbounds/{{createOutboundOver.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+# ---- Kasus gagal lainnya ----
+
+### Create out-bound gagal: tanpa item — harapan 422 errors.items "minimal 1 item"
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": []
+}
+
+### Create out-bound gagal: validasi item — harapan 422 dengan errors.items[0].product_id, warehouse_location_id, quantity
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "quantity": -5
+    }
+  ]
+}
+
+### Create out-bound gagal: tanpa warehouse_id — harapan 422 dengan errors.warehouse_id
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create out-bound gagal: produk & lokasi sama dua kali — harapan 422 errors.items[1] "produk yang sama di lokasi yang sama sudah ada di item lain"
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 1
+    },
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 2
+    }
+  ]
+}
+
+### Create out-bound gagal: lokasi milik gudang lain (RAK-B-01 Surabaya) — harapan 422 errors.items[0].warehouse_location_id
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create out-bound gagal: staff Malang ke gudang Surabaya — harapan 404 "warehouse tidak ditemukan"
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whSurabaya.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create out-bound gagal: supervisor — harapan 403 "anda tidak memiliki akses: outbounds:create"
+POST {{baseUrl}}/api/v1/outbounds
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Get out-bound gagal: id bukan UUID — harapan 400 "id harus berupa UUID"
+GET {{baseUrl}}/api/v1/outbounds/OUT-202610-0001
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get out-bound gagal: UUID tidak ada — harapan 404 "out-bound tidak ditemukan"
+GET {{baseUrl}}/api/v1/outbounds/{{$guid}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List out-bound gagal: warehouse_id bukan UUID — harapan 400 "warehouse_id harus berupa UUID"
+GET {{baseUrl}}/api/v1/outbounds?warehouse_id=WH-MALANG-01
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# =====================================================================
+# Stock transfers — /api/v1/stock-transfers (pindah rak di dalam SATU gudang)
+# Staff: create, read, revisi (hanya pembuatnya). Supervisor: read, approve, reject.
+# Superadmin: semua. Data dibatasi gudang milik user (WarehouseScope).
+# Status: pending -> approved | rejected -> revisi -> pending lagi.
+# Saat approve, tiap item = keluar dari rak asal + masuk ke rak tujuan dalam satu
+# transaksi; total stok produk di gudang tidak berubah (BR-007).
+# Rak asal & rak tujuan harus milik gudang yang sama dan tidak boleh sama.
+# Memakai stok WH-MALANG-01 hasil section Stock adjustments; prasyaratnya sama
+# dengan section Inbounds. Alur bisa diulang (nomor TRF baru tiap create).
+# =====================================================================
+
+# ---- Alur A: pindah rak -> revisi -> approve ----
+
+### Create transfer (staff Malang) — harapan 201, status pending, reference_number TRF-YYYYMM-NNNN
+# @name createTransfer
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "notes": "Rapikan rak, barang laris dipindah ke RAK-A-03",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 10,
+      "notes": "Dekat pintu keluar"
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[1].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 5
+    }
+  ]
+}
+
+### List transfer staff Malang — harapan 200, hanya pengajuan WH-MALANG-01, terbaru dulu
+GET {{baseUrl}}/api/v1/stock-transfers?page=1&per_page=15
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### List transfer supervisor — filter warehouse_id + status=pending
+GET {{baseUrl}}/api/v1/stock-transfers?warehouse_id={{whMalang.response.body.$.data[0].id}}&status=pending
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### List transfer dengan search — cocokkan reference_number (ILIKE)
+GET {{baseUrl}}/api/v1/stock-transfers?search={{createTransfer.response.body.$.data.reference_number}}
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Get transfer by id — harapan 200, items berisi product, source_location & destination_location
+GET {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Get transfer gagal: staff Surabaya buka pengajuan Malang — harapan 404 "stock transfer tidak ditemukan"
+GET {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### Revisi transfer (staff Malang, pembuat) — harapan 200, tetap pending, item lama diganti
+# warehouse_id tidak perlu dikirim: gudang tidak bisa diganti saat revisi.
+PUT {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "notes": "Rapikan rak (jumlah laptop dikurangi)",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 8,
+      "notes": "Dekat pintu keluar, 8 unit"
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[1].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 5
+    }
+  ]
+}
+
+### Revisi gagal: bukan pembuat (superadmin) — harapan 403 "hanya pembuat pengajuan yang bisa merevisi"
+PUT {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "notes": "Diubah superadmin",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Approve gagal: staff — harapan 403 "anda tidak memiliki akses: stock_transfers:approve"
+POST {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Approve (supervisor) — harapan 200, status approved
+# LP-001: RAK-A-01 -8, RAK-A-03 +8. TB-001: RAK-A-02 -5, RAK-A-03 +5.
+POST {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Approve ulang — harapan 409 "hanya stock transfer pending yang bisa di-approve (status: approved)"
+POST {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Revisi gagal: sudah approved — harapan 409 "stock transfer yang sudah approved tidak bisa diubah (BR-009)"
+PUT {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "notes": "Coba ubah setelah approved",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Reject gagal: sudah approved — harapan 409 "hanya stock transfer pending yang bisa di-reject (status: approved)"
+POST {{baseUrl}}/api/v1/stock-transfers/{{createTransfer.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Terlambat ditolak"
+}
+
+### Stok RAK-A-03 setelah approve — harapan 200, berisi LP-001 & TB-001 hasil transfer
+GET {{baseUrl}}/api/v1/stocks?location_id={{locMalang.response.body.$.data[2].id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Stok LP-001 di WH-MALANG-01 — jumlah semua rak sama dengan sebelum approve (hanya pindah rak)
+GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whMalang.response.body.$.data[0].id}}&product_id={{productLp001.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+# ---- Alur B: stok rak asal tidak cukup -> approve gagal (rollback) -> reject ----
+
+### Create transfer melebihi stok (staff Malang) — harapan 201 (stok belum dicek saat create)
+# @name createTransferOver
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "notes": "Kembalikan semua laptop ke RAK-A-01",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 100000
+    }
+  ]
+}
+
+### Approve gagal: stok rak asal tidak cukup — harapan 422 "stok tidak cukup untuk LP-001 di RAK-A-03: tersedia N, dibutuhkan 100000"
+# Status tetap pending; rak tujuan juga tidak bertambah (rollback).
+POST {{baseUrl}}/api/v1/stock-transfers/{{createTransferOver.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Reject pengajuan stok tidak cukup (supervisor) — harapan 200, status rejected
+POST {{baseUrl}}/api/v1/stock-transfers/{{createTransferOver.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Jumlah melebihi stok di RAK-A-03"
+}
+
+# ---- Kasus gagal lainnya ----
+
+### Create transfer gagal: tanpa item — harapan 422 errors.items "minimal 1 item"
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": []
+}
+
+### Create transfer gagal: validasi item — harapan 422 dengan errors.items[0].product_id, source_warehouse_location_id, destination_warehouse_location_id, quantity
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "quantity": 0
+    }
+  ]
+}
+
+### Create transfer gagal: tanpa warehouse_id — harapan 422 dengan errors.warehouse_id
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create transfer gagal: rak tujuan sama dengan rak asal — harapan 422 errors.items[0].destination_warehouse_location_id "rak tujuan harus berbeda dengan rak asal"
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create transfer gagal: rak tujuan milik gudang lain (RAK-B-01 Surabaya) — harapan 422 errors.items[0].destination_warehouse_location_id
+# Transfer hanya di dalam satu gudang; pindah antar-gudang tidak didukung endpoint ini.
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create transfer gagal: item sama dua kali — harapan 422 errors.items[1] "item yang sama sudah ada"
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 1
+    },
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 2
+    }
+  ]
+}
+
+### Create transfer gagal: staff Malang ke gudang Surabaya — harapan 404 "warehouse tidak ditemukan"
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whSurabaya.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locSurabaya.response.body.$.data[1].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Create transfer gagal: supervisor — harapan 403 "anda tidak memiliki akses: stock_transfers:create"
+POST {{baseUrl}}/api/v1/stock-transfers
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "source_warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "destination_warehouse_location_id": "{{locMalang.response.body.$.data[2].id}}",
+      "quantity": 1
+    }
+  ]
+}
+
+### Get transfer gagal: id bukan UUID — harapan 400 "id harus berupa UUID"
+GET {{baseUrl}}/api/v1/stock-transfers/TRF-202610-0001
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get transfer gagal: UUID tidak ada — harapan 404 "stock transfer tidak ditemukan"
+GET {{baseUrl}}/api/v1/stock-transfers/{{$guid}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List transfer gagal: warehouse_id bukan UUID — harapan 400 "warehouse_id harus berupa UUID"
+GET {{baseUrl}}/api/v1/stock-transfers?warehouse_id=WH-MALANG-01
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# =====================================================================
 # Stocks — /api/v1/stocks (saldo per lokasi & produk, hanya quantity > 0)
 # Filter opsional: warehouse_id, location_id, product_id, search (sku/name).
 # Data dibatasi gudang milik user (WarehouseScope), urut SKU lalu kode lokasi.
-# Saldo baru terisi setelah ada stock adjustment yang di-approve; stok yang
-# dibuat lewat section Stock adjustments ada di WH-MALANG-01, jadi filter
-# WH-SURABAYA-01 / RAK-B-01 di bawah tetap kosong.
-# Jalankan "Cari WH-SURABAYA-01", "List lokasi warehouse", dan
-# "Cari produk LP-001" dulu agar ID filternya tersedia.
+# Saldo berubah lewat approve stock adjustment / out-bound / stock transfer dan
+# lewat putaway in-bound. Kalau section di atas sudah dijalankan: WH-MALANG-01
+# berisi LP-001 & TB-001 di RAK-A-01..03, WH-SURABAYA-01 berisi hasil putaway
+# di RAK-B-01 & RAK-B-02, dan WH-SURABAYA-02 berisi LP-001 di RAK-C-01.
+# Jalankan "Cari WH-SURABAYA-01", "List lokasi warehouse", "Cari produk LP-001",
+# dan "Cari WH-SURABAYA-02" (section Inbounds) dulu agar ID filternya tersedia.
 # =====================================================================
 
 ### List stok superadmin — harapan 200, data + meta (page, per_page, total, total_pages)
@@ -1184,7 +2461,7 @@ GET {{baseUrl}}/api/v1/stocks?product_id=LP-001
 Accept: application/json
 Authorization: Bearer {{login.response.body.$.data.access_token}}
 
-### List stok supervisor — harapan 200, hanya stok WH-MALANG-01 & WH-SURABAYA-01
+### List stok supervisor — harapan 200, hanya stok WH-MALANG-01 & WH-SURABAYA-01 (RAK-C-01 tidak ikut)
 GET {{baseUrl}}/api/v1/stocks
 Accept: application/json
 Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
@@ -1194,7 +2471,7 @@ GET {{baseUrl}}/api/v1/stocks
 Accept: application/json
 Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
 
-### List stok staff Surabaya — harapan 200, hanya stok WH-SURABAYA-01 (kosong selama stok baru ada di Malang)
+### List stok staff Surabaya — harapan 200, hanya stok WH-SURABAYA-01 (hasil putaway in-bound)
 GET {{baseUrl}}/api/v1/stocks
 Accept: application/json
 Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
@@ -1203,3 +2480,8 @@ Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
 GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whSurabaya.response.body.$.data[0].id}}
 Accept: application/json
 Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### List stok supervisor filter WH-SURABAYA-02 — harapan 200, total 0 walau gudang itu berisi stok (di luar scope)
+GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whSurabaya2.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}

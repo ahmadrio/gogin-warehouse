@@ -29,6 +29,8 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	stockRepo := repository.NewStockRepository(db)
 	adjustmentRepo := repository.NewStockAdjustmentRepository(db)
 	outboundRepo := repository.NewOutboundRepository(db)
+	transferRepo := repository.NewStockTransferRepository(db)
+	inboundRepo := repository.NewInboundRepository(db)
 
 	authService := service.NewAuthService(userRepo, tokens)
 	productService := service.NewProductService(db, productRepo, categoryRepo, auditRepo)
@@ -38,6 +40,8 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	stockService := service.NewStockService(stockRepo)
 	adjustmentService := service.NewStockAdjustmentService(db, adjustmentRepo, warehouseRepo, lookupRepo, sequenceRepo, auditRepo, stockService)
 	outboundService := service.NewOutboundService(db, outboundRepo, warehouseRepo, lookupRepo, sequenceRepo, auditRepo, stockService)
+	transferService := service.NewStockTransferService(db, transferRepo, warehouseRepo, lookupRepo, sequenceRepo, auditRepo, stockService)
+	inboundService := service.NewInboundService(db, inboundRepo, warehouseRepo, lookupRepo, sequenceRepo, auditRepo, stockService)
 
 	authHandler := handler.NewAuthHandler(authService)
 	productHandler := handler.NewProductHandler(productService)
@@ -47,6 +51,8 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	stockHandler := handler.NewStockHandler(stockService)
 	adjustmentHandler := handler.NewStockAdjustmentHandler(adjustmentService)
 	outboundHandler := handler.NewOutboundHandler(outboundService)
+	transferHandler := handler.NewStockTransferHandler(transferService)
+	inboundHandler := handler.NewInboundHandler(inboundService)
 
 	// ---- 2. Daftarkan route ----
 	r := gin.New()
@@ -129,6 +135,28 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		outbounds.PUT("/:id", can(auth.ResOutbounds, auth.OpUpdate), outboundHandler.Update)
 		outbounds.POST("/:id/approve", can(auth.ResOutbounds, auth.OpApprove), outboundHandler.Approve)
 		outbounds.POST("/:id/reject", can(auth.ResOutbounds, auth.OpReject), outboundHandler.Reject)
+	}
+
+	transfers := protected.Group("/stock-transfers")
+	{
+		transfers.GET("", can(auth.ResStockTransfers, auth.OpRead), transferHandler.List)
+		transfers.GET("/:id", can(auth.ResStockTransfers, auth.OpRead), transferHandler.Get)
+		transfers.POST("", can(auth.ResStockTransfers, auth.OpCreate), transferHandler.Create)
+		transfers.PUT("/:id", can(auth.ResStockTransfers, auth.OpUpdate), transferHandler.Update)
+		transfers.POST("/:id/approve", can(auth.ResStockTransfers, auth.OpApprove), transferHandler.Approve)
+		transfers.POST("/:id/reject", can(auth.ResStockTransfers, auth.OpReject), transferHandler.Reject)
+	}
+
+	inbounds := protected.Group("/inbounds")
+	{
+		inbounds.GET("", can(auth.ResInbounds, auth.OpRead), inboundHandler.List)
+		inbounds.GET("/:id", can(auth.ResInbounds, auth.OpRead), inboundHandler.Get)
+		inbounds.POST("", can(auth.ResInbounds, auth.OpCreate), inboundHandler.Create)
+		inbounds.PUT("/:id", can(auth.ResInbounds, auth.OpUpdate), inboundHandler.Update)
+		inbounds.POST("/:id/approve", can(auth.ResInbounds, auth.OpApprove), inboundHandler.Approve)
+		inbounds.POST("/:id/reject", can(auth.ResInbounds, auth.OpReject), inboundHandler.Reject)
+		// Putaway dikerjakan staff gudang -> pakai permission update.
+		inbounds.POST("/:id/putaway", can(auth.ResInbounds, auth.OpUpdate), inboundHandler.Putaway)
 	}
 
 	return r

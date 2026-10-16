@@ -9,6 +9,7 @@ const (
 	ActionApprove         = "approve"
 	ActionReject          = "reject"
 	ActionExport          = "export"
+	ActionPutaway         = "putaway"
 )
 
 // Nilai kolom audit_trails.entity_type
