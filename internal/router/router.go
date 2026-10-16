@@ -28,6 +28,7 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	sequenceRepo := repository.NewSequenceRepository(db)
 	stockRepo := repository.NewStockRepository(db)
 	adjustmentRepo := repository.NewStockAdjustmentRepository(db)
+	outboundRepo := repository.NewOutboundRepository(db)
 
 	authService := service.NewAuthService(userRepo, tokens)
 	productService := service.NewProductService(db, productRepo, categoryRepo, auditRepo)
@@ -36,6 +37,7 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	warehouseService := service.NewWarehouseService(db, warehouseRepo, auditRepo)
 	stockService := service.NewStockService(stockRepo)
 	adjustmentService := service.NewStockAdjustmentService(db, adjustmentRepo, warehouseRepo, lookupRepo, sequenceRepo, auditRepo, stockService)
+	outboundService := service.NewOutboundService(db, outboundRepo, warehouseRepo, lookupRepo, sequenceRepo, auditRepo, stockService)
 
 	authHandler := handler.NewAuthHandler(authService)
 	productHandler := handler.NewProductHandler(productService)
@@ -44,6 +46,7 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	warehouseHandler := handler.NewWarehouseHandler(warehouseService)
 	stockHandler := handler.NewStockHandler(stockService)
 	adjustmentHandler := handler.NewStockAdjustmentHandler(adjustmentService)
+	outboundHandler := handler.NewOutboundHandler(outboundService)
 
 	// ---- 2. Daftarkan route ----
 	r := gin.New()
@@ -116,6 +119,16 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		adjustments.PUT("/:id", can(auth.ResStockAdjustments, auth.OpUpdate), adjustmentHandler.Update)
 		adjustments.POST("/:id/approve", can(auth.ResStockAdjustments, auth.OpApprove), adjustmentHandler.Approve)
 		adjustments.POST("/:id/reject", can(auth.ResStockAdjustments, auth.OpReject), adjustmentHandler.Reject)
+	}
+
+	outbounds := protected.Group("/outbounds")
+	{
+		outbounds.GET("", can(auth.ResOutbounds, auth.OpRead), outboundHandler.List)
+		outbounds.GET("/:id", can(auth.ResOutbounds, auth.OpRead), outboundHandler.Get)
+		outbounds.POST("", can(auth.ResOutbounds, auth.OpCreate), outboundHandler.Create)
+		outbounds.PUT("/:id", can(auth.ResOutbounds, auth.OpUpdate), outboundHandler.Update)
+		outbounds.POST("/:id/approve", can(auth.ResOutbounds, auth.OpApprove), outboundHandler.Approve)
+		outbounds.POST("/:id/reject", can(auth.ResOutbounds, auth.OpReject), outboundHandler.Reject)
 	}
 
 	return r

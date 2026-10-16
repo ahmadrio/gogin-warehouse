@@ -64,6 +64,8 @@ func validationMessage(fe validator.FieldError) string {
 		return "harus berupa UUID"
 	case "oneof":
 		return "harus salah satu dari: " + fe.Param()
+	case "gt":
+		return "harus lebih dari " + fe.Param()
 	default:
 		return "tidak valid (" + fe.Tag() + ")"
 	}
