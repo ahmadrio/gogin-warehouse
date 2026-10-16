@@ -235,6 +235,208 @@ Accept: application/json
 Authorization: Bearer {{login.response.body.$.data.access_token}}
 
 # =====================================================================
+# Products — /api/v1/products
+# Read: semua role. Create/Update/Delete: superadmin saja.
+# Kategori produk harus ada & aktif; dipakai kategori ELK dari seeder.
+# Urutan jalankan: Cari kategori ELK -> Create -> Get/Update -> Delete
+# (bisa diulang, SKU produk yang sudah dihapus boleh dipakai lagi).
+# Delete produk yang masih punya stok -> 409; belum bisa dicoba karena
+# endpoint transaksi stok belum ada.
+# =====================================================================
+
+### Cari kategori ELK (seeder) — ID-nya dipakai request produk di bawah
+# @name catElk
+GET {{baseUrl}}/api/v1/product-categories?search=ELK
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List produk — harapan 200, minimal 3 produk seeder (LP-001, MJ-001, TB-001) urut SKU
+GET {{baseUrl}}/api/v1/products?page=1&per_page=15
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List produk dengan search — cocokkan sku/name (ILIKE)
+GET {{baseUrl}}/api/v1/products?search=laptop
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List produk per kategori — harapan 200, hanya produk kategori ELK
+GET {{baseUrl}}/api/v1/products?category_id={{catElk.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Cari produk LP-001 (seeder) — ID-nya dipakai section Stocks
+# @name productLp001
+GET {{baseUrl}}/api/v1/products?search=LP-001
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List produk gagal: category_id bukan UUID — harapan 400 "category_id harus berupa UUID"
+GET {{baseUrl}}/api/v1/products?category_id=elk
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Create produk — harapan 201, is_active default true, product_category ikut tampil
+# ID-nya dipakai request di bawah: {{createProduct.response.body.$.data.id}}
+# @name createProduct
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "product_category_id": "{{catElk.response.body.$.data[0].id}}",
+  "sku": "HP-001",
+  "name": "Smartphone 6 inch",
+  "description": "Smartphone layar 6 inch",
+  "unit": "pcs",
+  "minimum_stock": 10
+}
+
+### Get produk by id — harapan 200
+GET {{baseUrl}}/api/v1/products/{{createProduct.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get produk sebagai staff — harapan 200 (staff punya products:read)
+GET {{baseUrl}}/api/v1/products/{{createProduct.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Update produk — harapan 200, is_active wajib dikirim
+PUT {{baseUrl}}/api/v1/products/{{createProduct.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "product_category_id": "{{catElk.response.body.$.data[0].id}}",
+  "sku": "HP-001",
+  "name": "Smartphone 6 inch (dus)",
+  "description": "Smartphone layar 6 inch, 1 dus isi 10",
+  "unit": "box",
+  "minimum_stock": 3,
+  "is_active": false
+}
+
+### Create produk gagal: SKU duplikat — harapan 409 "SKU sudah dipakai"
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "product_category_id": "{{catElk.response.body.$.data[0].id}}",
+  "sku": "LP-001",
+  "name": "Laptop Duplikat",
+  "unit": "pcs"
+}
+
+### Update produk gagal: SKU milik produk lain — harapan 409 "SKU sudah dipakai"
+PUT {{baseUrl}}/api/v1/products/{{createProduct.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "product_category_id": "{{catElk.response.body.$.data[0].id}}",
+  "sku": "LP-001",
+  "name": "Smartphone 6 inch",
+  "unit": "pcs",
+  "is_active": true
+}
+
+### Create produk gagal: validasi — harapan 422 dengan errors.product_category_id, sku, name, unit, minimum_stock
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "sku": "",
+  "name": "",
+  "unit": "lusin",
+  "minimum_stock": -1
+}
+
+### Create produk gagal: kategori tidak ada — harapan 422 errors.product_category_id "kategori tidak ditemukan atau tidak aktif"
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "product_category_id": "{{$guid}}",
+  "sku": "HP-002",
+  "name": "Smartphone 7 inch",
+  "unit": "pcs"
+}
+
+### Create produk gagal: product_category_id bukan UUID — harapan 400 "format JSON tidak valid"
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "product_category_id": "ELK",
+  "sku": "HP-002",
+  "name": "Smartphone 7 inch",
+  "unit": "pcs"
+}
+
+### Update produk gagal: tanpa is_active — harapan 422 dengan errors.is_active
+PUT {{baseUrl}}/api/v1/products/{{createProduct.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "product_category_id": "{{catElk.response.body.$.data[0].id}}",
+  "sku": "HP-001",
+  "name": "Smartphone 6 inch",
+  "unit": "pcs"
+}
+
+### Create produk gagal: staff — harapan 403 "anda tidak memiliki akses: products:create"
+POST {{baseUrl}}/api/v1/products
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "product_category_id": "{{catElk.response.body.$.data[0].id}}",
+  "sku": "HP-003",
+  "name": "Smartphone 8 inch",
+  "unit": "pcs"
+}
+
+### Delete produk gagal: supervisor — harapan 403 "anda tidak memiliki akses: products:delete"
+DELETE {{baseUrl}}/api/v1/products/{{createProduct.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Get produk gagal: id bukan UUID — harapan 400 "id harus berupa UUID"
+GET {{baseUrl}}/api/v1/products/123
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get produk gagal: UUID tidak ada — harapan 404 "produk tidak ditemukan"
+GET {{baseUrl}}/api/v1/products/{{$guid}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Delete produk — harapan 204 (soft delete)
+DELETE {{baseUrl}}/api/v1/products/{{createProduct.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get produk setelah dihapus — harapan 404 "produk tidak ditemukan"
+GET {{baseUrl}}/api/v1/products/{{createProduct.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# =====================================================================
 # Warehouses — /api/v1/warehouses
 # Read: semua role, tapi data dibatasi gudang milik user (WarehouseScope).
 # Create: superadmin saja. Gudang di luar scope dianggap tidak ada (404).
@@ -267,6 +469,7 @@ Accept: application/json
 Authorization: Bearer {{login.response.body.$.data.access_token}}
 
 ### List lokasi warehouse — harapan 200, RAK-B-01..RAK-B-03
+# @name locSurabaya
 GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations
 Accept: application/json
 Authorization: Bearer {{login.response.body.$.data.access_token}}
@@ -334,3 +537,190 @@ Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
   "code": "WH-GRESIK-01",
   "name": "Gudang Gresik"
 }
+
+# =====================================================================
+# Warehouse locations — /api/v1/warehouses/:id/locations/:location_id
+# Read: semua role (dibatasi WarehouseScope). Create/Update/Delete: superadmin saja.
+# Kode lokasi unik per gudang. Jalankan "Cari WH-SURABAYA-01" di section
+# Warehouses dulu. Urutan: Create -> Get/Update -> Delete (bisa diulang).
+# Delete lokasi yang masih berisi barang -> 409; belum bisa dicoba karena
+# endpoint transaksi stok belum ada.
+# =====================================================================
+
+### Cari WH-MALANG-01 — dipakai untuk uji lokasi milik gudang lain
+# @name whMalang
+GET {{baseUrl}}/api/v1/warehouses?search=WH-MALANG-01
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Create lokasi di WH-SURABAYA-01 — harapan 201, is_active default true
+# ID-nya dipakai request di bawah: {{createLocation.response.body.$.data.id}}
+# @name createLocation
+POST {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "RAK-B-04",
+  "name": "Rak RAK-B-04",
+  "description": "Rak barang elektronik kecil"
+}
+
+### Get lokasi by id — harapan 200
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get lokasi sebagai staff Surabaya — harapan 200 (WH-SURABAYA-01 ada di scope-nya)
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### Update lokasi — harapan 200, is_active wajib dikirim
+PUT {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "RAK-B-04",
+  "name": "Rak RAK-B-04 (Elektronik)",
+  "description": "Rak barang elektronik kecil, lantai 2",
+  "is_active": false
+}
+
+### Create lokasi gagal: kode duplikat di gudang yang sama — harapan 409 "kode lokasi sudah dipakai di warehouse ini"
+POST {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "RAK-B-01",
+  "name": "Rak Duplikat"
+}
+
+### Update lokasi gagal: kode milik lokasi lain — harapan 409 "kode lokasi sudah dipakai di warehouse ini"
+PUT {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "RAK-B-01",
+  "name": "Rak RAK-B-04",
+  "is_active": true
+}
+
+### Create lokasi gagal: validasi — harapan 422 dengan errors.code & errors.name
+POST {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "description": "Tanpa kode dan nama"
+}
+
+### Update lokasi gagal: tanpa is_active — harapan 422 dengan errors.is_active
+PUT {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "code": "RAK-B-04",
+  "name": "Rak RAK-B-04"
+}
+
+### Create lokasi gagal: supervisor — harapan 403 "anda tidak memiliki akses: warehouse_locations:create"
+POST {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "code": "RAK-B-05",
+  "name": "Rak RAK-B-05"
+}
+
+### Get lokasi gagal: staff Malang buka gudang Surabaya — harapan 404 "warehouse tidak ditemukan"
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Get lokasi gagal: lokasi Surabaya dibuka lewat gudang Malang — harapan 404 "lokasi tidak ditemukan"
+GET {{baseUrl}}/api/v1/warehouses/{{whMalang.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get lokasi gagal: location_id bukan UUID — harapan 400 "location_id harus berupa UUID"
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/rak-b-04
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Delete lokasi — harapan 204 (soft delete)
+DELETE {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get lokasi setelah dihapus — harapan 404 "lokasi tidak ditemukan"
+GET {{baseUrl}}/api/v1/warehouses/{{whSurabaya.response.body.$.data[0].id}}/locations/{{createLocation.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# =====================================================================
+# Stocks — /api/v1/stocks (saldo per lokasi & produk, hanya quantity > 0)
+# Filter opsional: warehouse_id, location_id, product_id, search (sku/name).
+# Data dibatasi gudang milik user (WarehouseScope), urut SKU lalu kode lokasi.
+# Endpoint transaksi stok belum ada, jadi saat ini data masih kosong (total 0).
+# Jalankan "Cari WH-SURABAYA-01", "List lokasi warehouse", dan
+# "Cari produk LP-001" dulu agar ID filternya tersedia.
+# =====================================================================
+
+### List stok superadmin — harapan 200, data + meta (page, per_page, total, total_pages)
+GET {{baseUrl}}/api/v1/stocks?page=1&per_page=15
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List stok per gudang — WH-SURABAYA-01
+GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whSurabaya.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List stok per lokasi — RAK-B-01
+GET {{baseUrl}}/api/v1/stocks?location_id={{locSurabaya.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List stok per produk — LP-001 di semua gudang
+GET {{baseUrl}}/api/v1/stocks?product_id={{productLp001.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List stok kombinasi filter + search — LP-001 di WH-SURABAYA-01
+GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whSurabaya.response.body.$.data[0].id}}&search=laptop
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List stok gagal: warehouse_id bukan UUID — harapan 400 "warehouse_id harus berupa UUID"
+GET {{baseUrl}}/api/v1/stocks?warehouse_id=WH-MALANG-01
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List stok gagal: product_id bukan UUID — harapan 400 "product_id harus berupa UUID"
+GET {{baseUrl}}/api/v1/stocks?product_id=LP-001
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List stok supervisor — saat ini 403 "anda tidak memiliki akses: stocks:read"
+# Role supervisor & staff belum diberi stocks:read di auth.RoleDefinisions.
+GET {{baseUrl}}/api/v1/stocks
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### List stok staff Malang — saat ini 403 "anda tidak memiliki akses: stocks:read"
+GET {{baseUrl}}/api/v1/stocks
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}

@@ -20,17 +20,23 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 
 	userRepo := repository.NewUserRepository(db)
 	auditRepo := repository.NewAuditRepository(db)
+	productRepo := repository.NewProductRepository(db)
 	categoryRepo := repository.NewProductCategoryRepository(db)
+	locationRepo := repository.NewWarehouseLocationRepository(db)
 	warehouseRepo := repository.NewWarehouseRepository(db)
 	stockRepo := repository.NewStockRepository(db)
 
 	authService := service.NewAuthService(userRepo, tokens)
+	productService := service.NewProductService(db, productRepo, categoryRepo, auditRepo)
 	categoryService := service.NewProductCategoryService(db, categoryRepo, auditRepo)
+	locationService := service.NewWarehouseLocationService(db, locationRepo, warehouseRepo, auditRepo)
 	warehouseService := service.NewWarehouseService(db, warehouseRepo, auditRepo)
 	stockService := service.NewStockService(stockRepo)
 
 	authHandler := handler.NewAuthHandler(authService)
+	productHandler := handler.NewProductHandler(productService)
 	categoryHandler := handler.NewProductCategoryHandler(categoryService)
+	locationHandler := handler.NewWarehouseLocationHandler(locationService)
 	warehouseHandler := handler.NewWarehouseHandler(warehouseService)
 	stockHandler := handler.NewStockHandler(stockService)
 
@@ -63,6 +69,15 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 		return middleware.RequirePermission(auth.Perm(resource, operation))
 	}
 
+	products := protected.Group("/products")
+	{
+		products.GET("", can(auth.ResProducts, auth.OpRead), productHandler.List)
+		products.GET("/:id", can(auth.ResProducts, auth.OpRead), productHandler.Get)
+		products.POST("", can(auth.ResProducts, auth.OpCreate), productHandler.Create)
+		products.PUT("/:id", can(auth.ResProducts, auth.OpUpdate), productHandler.Update)
+		products.DELETE("/:id", can(auth.ResProducts, auth.OpDelete), productHandler.Delete)
+	}
+
 	categories := protected.Group("/product-categories")
 	{
 		categories.GET("", can(auth.ResProductCategories, auth.OpRead), categoryHandler.List)
@@ -76,8 +91,14 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	{
 		warehouses.GET("", can(auth.ResWarehouses, auth.OpRead), warehouseHandler.List)
 		warehouses.GET("/:id", can(auth.ResWarehouses, auth.OpRead), warehouseHandler.Get)
-		warehouses.GET("/:id/locations", can(auth.ResWarehouseLocations, auth.OpRead), warehouseHandler.ListLocations)
 		warehouses.POST("", can(auth.ResWarehouses, auth.OpCreate), warehouseHandler.Create)
+
+		// lokasi (rak) di dalam gudang
+		warehouses.GET("/:id/locations", can(auth.ResWarehouseLocations, auth.OpRead), warehouseHandler.ListLocations)
+		warehouses.GET("/:id/locations/:location_id", can(auth.ResWarehouseLocations, auth.OpRead), locationHandler.Get)
+		warehouses.POST("/:id/locations", can(auth.ResWarehouseLocations, auth.OpCreate), locationHandler.Create)
+		warehouses.PUT("/:id/locations/:location_id", can(auth.ResWarehouseLocations, auth.OpUpdate), locationHandler.Update)
+		warehouses.DELETE("/:id/locations/:location_id", can(auth.ResWarehouseLocations, auth.OpDelete), locationHandler.Delete)
 	}
 
 	protected.GET("/stocks", can(auth.ResStocks, auth.OpRead), stockHandler.List)

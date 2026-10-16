@@ -16,7 +16,6 @@ type ProductCategory struct {
 
 type Product struct {
 	Base
-	Code              string    `json:"code"`
 	ProductCategoryID uuid.UUID `json:"product_category_id"`
 	SKU               string    `gorm:"column:sku" json:"sku"`
 	Name              string    `json:"name"`
