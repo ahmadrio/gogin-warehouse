@@ -67,6 +67,7 @@ var RoleDefinisions = map[string][]string{
 		Perm(ResReports, OpRead), Perm(ResReports, OpExport), Perm(ResDashboard, OpRead),
 		Perm(ResProductCategories, OpRead), Perm(ResProducts, OpRead),
 		Perm(ResWarehouses, OpRead), Perm(ResWarehouseLocations, OpRead),
+		Perm(ResStocks, OpRead),
 	},
 	"staff": {
 		Perm(ResInbounds, OpCreate), Perm(ResInbounds, OpRead), Perm(ResInbounds, OpUpdate),
@@ -76,5 +77,6 @@ var RoleDefinisions = map[string][]string{
 		Perm(ResDashboard, OpRead),
 		Perm(ResProductCategories, OpRead), Perm(ResProducts, OpRead),
 		Perm(ResWarehouses, OpRead), Perm(ResWarehouseLocations, OpRead),
+		Perm(ResStocks, OpRead),
 	},
 }

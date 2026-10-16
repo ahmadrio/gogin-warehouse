@@ -4,6 +4,7 @@ package handler
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"warehouse-management/pkg/apperror"
 
@@ -20,7 +21,7 @@ func bindJSON(c *gin.Context, req any) error {
 		if errors.As(err, &verrs) {
 			details := make(map[string]string, len(verrs))
 			for _, fe := range verrs {
-				details[toSnakeCase(fe.Field())] = validationMessage(fe)
+				details[fieldPath(fe)] = validationMessage(fe)
 			}
 			return apperror.Validation(details)
 		}
@@ -39,15 +40,24 @@ func paramUUID(c *gin.Context, name string) (uuid.UUID, error) {
 }
 
 func validationMessage(fe validator.FieldError) string {
+	isList := fe.Kind() == reflect.Slice || fe.Kind() == reflect.Map
 	switch fe.Tag() {
 	case "required":
 		return "wajib diisi"
 	case "email":
 		return "format email tidak valid"
 	case "min":
+		if isList {
+			return fmt.Sprintf("minimal %s item", fe.Param())
+		}
 		return fmt.Sprintf("minimal %s karakter", fe.Param())
 	case "max":
+		if isList {
+			return fmt.Sprintf("maksimal %s item", fe.Param())
+		}
 		return fmt.Sprintf("maksimal %s karakter", fe.Param())
+	case "ne":
+		return "tidak boleh " + fe.Param()
 	case "gte":
 		return fmt.Sprintf("minimal %s", fe.Param())
 	case "uuid":
@@ -89,4 +99,17 @@ func queryUUID(c *gin.Context, name string) (*uuid.UUID, error) {
 		return nil, apperror.BadRequest(name + " harus berupa UUID")
 	}
 	return &id, nil
+}
+
+// fieldPath membentuk nama field untuk pesan error, termasuk field di dalam array:
+// "StockAdjustmentRequest.Items[0].QuantityChange" -> "items[0].quantity_change"
+func fieldPath(fe validator.FieldError) string {
+	parts := strings.Split(fe.Namespace(), ".")
+	if len(parts) > 1 {
+		parts = parts[1:] // buang nama struct paling luar
+	}
+	for i, part := range parts {
+		parts[i] = toSnakeCase(part)
+	}
+	return strings.Join(parts, ".")
 }

@@ -240,8 +240,8 @@ Authorization: Bearer {{login.response.body.$.data.access_token}}
 # Kategori produk harus ada & aktif; dipakai kategori ELK dari seeder.
 # Urutan jalankan: Cari kategori ELK -> Create -> Get/Update -> Delete
 # (bisa diulang, SKU produk yang sudah dihapus boleh dipakai lagi).
-# Delete produk yang masih punya stok -> 409; belum bisa dicoba karena
-# endpoint transaksi stok belum ada.
+# Delete produk yang masih punya stok -> 409; contohnya ada di section
+# Stock adjustments (setelah approve).
 # =====================================================================
 
 ### Cari kategori ELK (seeder) — ID-nya dipakai request produk di bawah
@@ -543,8 +543,8 @@ Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
 # Read: semua role (dibatasi WarehouseScope). Create/Update/Delete: superadmin saja.
 # Kode lokasi unik per gudang. Jalankan "Cari WH-SURABAYA-01" di section
 # Warehouses dulu. Urutan: Create -> Get/Update -> Delete (bisa diulang).
-# Delete lokasi yang masih berisi barang -> 409; belum bisa dicoba karena
-# endpoint transaksi stok belum ada.
+# Delete lokasi yang masih berisi barang -> 409; contohnya ada di section
+# Stock adjustments (setelah approve).
 # =====================================================================
 
 ### Cari WH-MALANG-01 — dipakai untuk uji lokasi milik gudang lain
@@ -671,10 +671,480 @@ Accept: application/json
 Authorization: Bearer {{login.response.body.$.data.access_token}}
 
 # =====================================================================
+# Stock adjustments — /api/v1/stock-adjustments
+# Staff: create, read, revisi (hanya pembuatnya). Supervisor: read, approve, reject.
+# Superadmin: semua. Data dibatasi gudang milik user (WarehouseScope).
+# Status: pending -> approved (stok berubah) | rejected -> revisi -> pending lagi.
+# Stok HANYA berubah saat approve; stok tidak cukup = 422 dan semua rollback.
+# Tipe: stock_opname & correction boleh +/-, damaged_goods & lost_goods hanya -.
+# Jalankan dulu: semua login, "Cari WH-MALANG-01", "Cari WH-SURABAYA-01",
+# "List lokasi warehouse" (Surabaya), "Cari produk LP-001", lalu 2 request
+# persiapan di bawah. Alur A/B/C bisa diulang (nomor ADJ baru tiap create).
+# =====================================================================
+
+### Persiapan: list lokasi WH-MALANG-01 — data[0] RAK-A-01, data[1] RAK-A-02
+# @name locMalang
+GET {{baseUrl}}/api/v1/warehouses/{{whMalang.response.body.$.data[0].id}}/locations
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Persiapan: cari produk TB-001 (seeder)
+# @name productTb001
+GET {{baseUrl}}/api/v1/products?search=TB-001
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# ---- Alur A: stock opname -> revisi -> approve ----
+
+### Create adjustment (staff Malang) — harapan 201, status pending, reference_number ADJ-YYYYMM-NNNN
+# @name createAdjustment
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "stock_opname",
+  "reason": "Hasil stock opname bulanan Oktober",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 20,
+      "notes": "Hitung fisik 20 unit"
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[1].id}}",
+      "quantity_change": 10
+    }
+  ]
+}
+
+### List adjustment staff Malang — harapan 200, hanya pengajuan WH-MALANG-01, terbaru dulu
+GET {{baseUrl}}/api/v1/stock-adjustments?page=1&per_page=15
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### List adjustment supervisor — filter warehouse_id + status=pending
+GET {{baseUrl}}/api/v1/stock-adjustments?warehouse_id={{whMalang.response.body.$.data[0].id}}&status=pending
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### List adjustment dengan search — cocokkan reference_number (ILIKE)
+GET {{baseUrl}}/api/v1/stock-adjustments?search={{createAdjustment.response.body.$.data.reference_number}}
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Get adjustment by id — harapan 200, items berisi product & warehouse_location
+GET {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Get adjustment gagal: staff Surabaya buka pengajuan Malang — harapan 404 "stock adjustment tidak ditemukan"
+GET {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### Revisi adjustment (staff Malang, pembuat) — harapan 200, tetap pending, item lama diganti
+# warehouse_id tidak perlu dikirim: gudang tidak bisa diganti saat revisi.
+PUT {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "adjustment_type": "stock_opname",
+  "reason": "Hasil stock opname bulanan Oktober (hitung ulang)",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 25,
+      "notes": "Hitung ulang: 25 unit"
+    },
+    {
+      "product_id": "{{productTb001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[1].id}}",
+      "quantity_change": 10
+    }
+  ]
+}
+
+### Revisi gagal: bukan pembuat (superadmin) — harapan 403 "hanya pembuat pengajuan yang bisa merevisi"
+PUT {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+{
+  "adjustment_type": "stock_opname",
+  "reason": "Diubah superadmin",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 1
+    }
+  ]
+}
+
+### Approve gagal: staff — harapan 403 "anda tidak memiliki akses: stock_adjustments:approve"
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### Approve (supervisor) — harapan 200, status approved; stok LP-001@RAK-A-01 +25, TB-001@RAK-A-02 +10
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Approve ulang — harapan 409 "hanya pengajuan pending yang bisa di-approve (status: approved)"
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Revisi gagal: sudah approved — harapan 409 "pengajuan yang sudah approved tidak bisa diubah (BR-009)"
+PUT {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "adjustment_type": "stock_opname",
+  "reason": "Coba ubah setelah approved",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 1
+    }
+  ]
+}
+
+### Reject gagal: sudah approved — harapan 409 "hanya pengajuan pending yang bisa di-reject (status: approved)"
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustment.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Terlambat ditolak"
+}
+
+### Stok WH-MALANG-01 setelah approve — harapan 200, LP-001@RAK-A-01 & TB-001@RAK-A-02 bertambah
+GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whMalang.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Delete produk gagal: LP-001 masih punya stok — harapan 409 "produk masih memiliki stok N, tidak bisa dihapus"
+# PERHATIAN: jalankan hanya setelah approve di atas berhasil. Kalau stok LP-001 = 0,
+# produk seeder ini BENAR-BENAR terhapus (soft delete).
+DELETE {{baseUrl}}/api/v1/products/{{productLp001.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Delete lokasi gagal: RAK-A-01 masih berisi barang — harapan 409 "lokasi masih berisi N barang, tidak bisa dihapus"
+# PERHATIAN: sama seperti di atas, kalau RAK-A-01 kosong lokasinya ikut terhapus.
+DELETE {{baseUrl}}/api/v1/warehouses/{{whMalang.response.body.$.data[0].id}}/locations/{{locMalang.response.body.$.data[0].id}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# ---- Alur B: barang rusak -> reject -> revisi -> approve ----
+
+### Create adjustment damaged_goods (staff Malang) — harapan 201, quantity_change harus negatif
+# @name createAdjustmentDamaged
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "damaged_goods",
+  "reason": "Barang rusak saat bongkar muat",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": -2,
+      "notes": "Layar retak"
+    }
+  ]
+}
+
+### Reject gagal: tanpa rejection_note — harapan 422 dengan errors.rejection_note
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustmentDamaged.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{}
+
+### Reject (supervisor) — harapan 200, status rejected, rejection_note terisi, stok tidak berubah
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustmentDamaged.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Hanya 1 unit yang rusak, cek ulang"
+}
+
+### Revisi setelah ditolak (staff Malang) — harapan 200, status kembali pending, rejection_note null
+PUT {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustmentDamaged.response.body.$.data.id}}
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "adjustment_type": "damaged_goods",
+  "reason": "Barang rusak saat bongkar muat (sudah dicek ulang)",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": -1,
+      "notes": "Layar retak, 1 unit"
+    }
+  ]
+}
+
+### Approve revisi (supervisor) — harapan 200, status approved; stok LP-001@RAK-A-01 -1
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustmentDamaged.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+# ---- Alur C: stok tidak cukup -> approve gagal (rollback) -> reject ----
+
+### Create adjustment correction minus besar (staff Malang) — harapan 201 (stok belum dicek saat create)
+# @name createAdjustmentOver
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "correction",
+  "reason": "Koreksi salah catat",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": -100000
+    }
+  ]
+}
+
+### Approve gagal: stok tidak cukup — harapan 422 "stok tidak cukup untuk LP-001 di RAK-A-01: tersedia N, dibutuhkan 100000"
+# Status tetap pending dan saldo tidak berubah (rollback).
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustmentOver.response.body.$.data.id}}/approve
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+### Reject pengajuan stok tidak cukup (supervisor) — harapan 200, status rejected
+POST {{baseUrl}}/api/v1/stock-adjustments/{{createAdjustmentOver.response.body.$.data.id}}/reject
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "rejection_note": "Jumlah koreksi melebihi stok yang ada"
+}
+
+# ---- Kasus gagal lainnya ----
+
+### Create gagal: validasi header — harapan 422 dengan errors.adjustment_type, reason, items ("minimal 1 item")
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "hilang",
+  "reason": "",
+  "items": []
+}
+
+### Create gagal: validasi item — harapan 422 dengan errors.items[0].product_id, warehouse_location_id, quantity_change
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "correction",
+  "reason": "Item tidak lengkap",
+  "items": [
+    {
+      "quantity_change": 0
+    }
+  ]
+}
+
+### Create gagal: tanpa warehouse_id — harapan 422 dengan errors.warehouse_id
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "adjustment_type": "correction",
+  "reason": "Lupa warehouse",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 1
+    }
+  ]
+}
+
+### Create gagal: damaged_goods bernilai positif — harapan 422 errors.items[0].quantity_change "harus negatif untuk tipe damaged_goods"
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "damaged_goods",
+  "reason": "Barang rusak",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 3
+    }
+  ]
+}
+
+### Create gagal: produk & lokasi sama dua kali — harapan 422 errors.items[1] "produk yang sama di lokasi yang sama sudah ada di item lain"
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "correction",
+  "reason": "Item dobel",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 1
+    },
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 2
+    }
+  ]
+}
+
+### Create gagal: lokasi milik gudang lain (RAK-B-01 Surabaya) — harapan 422 errors.items[0].warehouse_location_id
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "correction",
+  "reason": "Lokasi salah gudang",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}",
+      "quantity_change": 1
+    }
+  ]
+}
+
+### Create gagal: produk tidak ada — harapan 422 errors.items[0].product_id "produk tidak ditemukan atau tidak aktif"
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "correction",
+  "reason": "Produk tidak dikenal",
+  "items": [
+    {
+      "product_id": "{{$guid}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 1
+    }
+  ]
+}
+
+### Create gagal: staff Malang ke gudang Surabaya — harapan 404 "warehouse tidak ditemukan"
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whSurabaya.response.body.$.data[0].id}}",
+  "adjustment_type": "correction",
+  "reason": "Bukan gudang saya",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locSurabaya.response.body.$.data[0].id}}",
+      "quantity_change": 1
+    }
+  ]
+}
+
+### Create gagal: supervisor — harapan 403 "anda tidak memiliki akses: stock_adjustments:create"
+POST {{baseUrl}}/api/v1/stock-adjustments
+Content-Type: application/json
+Accept: application/json
+Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
+
+{
+  "warehouse_id": "{{whMalang.response.body.$.data[0].id}}",
+  "adjustment_type": "correction",
+  "reason": "Supervisor tidak boleh membuat",
+  "items": [
+    {
+      "product_id": "{{productLp001.response.body.$.data[0].id}}",
+      "warehouse_location_id": "{{locMalang.response.body.$.data[0].id}}",
+      "quantity_change": 1
+    }
+  ]
+}
+
+### Get adjustment gagal: id bukan UUID — harapan 400 "id harus berupa UUID"
+GET {{baseUrl}}/api/v1/stock-adjustments/ADJ-202610-0001
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### Get adjustment gagal: UUID tidak ada — harapan 404 "stock adjustment tidak ditemukan"
+GET {{baseUrl}}/api/v1/stock-adjustments/{{$guid}}
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+### List adjustment gagal: warehouse_id bukan UUID — harapan 400 "warehouse_id harus berupa UUID"
+GET {{baseUrl}}/api/v1/stock-adjustments?warehouse_id=WH-MALANG-01
+Accept: application/json
+Authorization: Bearer {{login.response.body.$.data.access_token}}
+
+# =====================================================================
 # Stocks — /api/v1/stocks (saldo per lokasi & produk, hanya quantity > 0)
 # Filter opsional: warehouse_id, location_id, product_id, search (sku/name).
 # Data dibatasi gudang milik user (WarehouseScope), urut SKU lalu kode lokasi.
-# Endpoint transaksi stok belum ada, jadi saat ini data masih kosong (total 0).
+# Saldo baru terisi setelah ada stock adjustment yang di-approve; stok yang
+# dibuat lewat section Stock adjustments ada di WH-MALANG-01, jadi filter
+# WH-SURABAYA-01 / RAK-B-01 di bawah tetap kosong.
 # Jalankan "Cari WH-SURABAYA-01", "List lokasi warehouse", dan
 # "Cari produk LP-001" dulu agar ID filternya tersedia.
 # =====================================================================
@@ -714,13 +1184,22 @@ GET {{baseUrl}}/api/v1/stocks?product_id=LP-001
 Accept: application/json
 Authorization: Bearer {{login.response.body.$.data.access_token}}
 
-### List stok supervisor — saat ini 403 "anda tidak memiliki akses: stocks:read"
-# Role supervisor & staff belum diberi stocks:read di auth.RoleDefinisions.
+### List stok supervisor — harapan 200, hanya stok WH-MALANG-01 & WH-SURABAYA-01
 GET {{baseUrl}}/api/v1/stocks
 Accept: application/json
 Authorization: Bearer {{loginSupervisor.response.body.$.data.access_token}}
 
-### List stok staff Malang — saat ini 403 "anda tidak memiliki akses: stocks:read"
+### List stok staff Malang — harapan 200, hanya stok WH-MALANG-01
 GET {{baseUrl}}/api/v1/stocks
+Accept: application/json
+Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}
+
+### List stok staff Surabaya — harapan 200, hanya stok WH-SURABAYA-01 (kosong selama stok baru ada di Malang)
+GET {{baseUrl}}/api/v1/stocks
+Accept: application/json
+Authorization: Bearer {{loginStaffSurabaya.response.body.$.data.access_token}}
+
+### List stok staff Malang filter gudang Surabaya — harapan 200, total 0 (di luar scope, bukan 403/404)
+GET {{baseUrl}}/api/v1/stocks?warehouse_id={{whSurabaya.response.body.$.data[0].id}}
 Accept: application/json
 Authorization: Bearer {{loginStaffMalang.response.body.$.data.access_token}}

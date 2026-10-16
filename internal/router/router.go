@@ -24,7 +24,10 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	categoryRepo := repository.NewProductCategoryRepository(db)
 	locationRepo := repository.NewWarehouseLocationRepository(db)
 	warehouseRepo := repository.NewWarehouseRepository(db)
+	lookupRepo := repository.NewLookupRepository(db)
+	sequenceRepo := repository.NewSequenceRepository(db)
 	stockRepo := repository.NewStockRepository(db)
+	adjustmentRepo := repository.NewStockAdjustmentRepository(db)
 
 	authService := service.NewAuthService(userRepo, tokens)
 	productService := service.NewProductService(db, productRepo, categoryRepo, auditRepo)
@@ -32,6 +35,7 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	locationService := service.NewWarehouseLocationService(db, locationRepo, warehouseRepo, auditRepo)
 	warehouseService := service.NewWarehouseService(db, warehouseRepo, auditRepo)
 	stockService := service.NewStockService(stockRepo)
+	adjustmentService := service.NewStockAdjustmentService(db, adjustmentRepo, warehouseRepo, lookupRepo, sequenceRepo, auditRepo, stockService)
 
 	authHandler := handler.NewAuthHandler(authService)
 	productHandler := handler.NewProductHandler(productService)
@@ -39,6 +43,7 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	locationHandler := handler.NewWarehouseLocationHandler(locationService)
 	warehouseHandler := handler.NewWarehouseHandler(warehouseService)
 	stockHandler := handler.NewStockHandler(stockService)
+	adjustmentHandler := handler.NewStockAdjustmentHandler(adjustmentService)
 
 	// ---- 2. Daftarkan route ----
 	r := gin.New()
@@ -102,6 +107,16 @@ func New(cfg *config.Config, db *gorm.DB) *gin.Engine {
 	}
 
 	protected.GET("/stocks", can(auth.ResStocks, auth.OpRead), stockHandler.List)
+
+	adjustments := protected.Group("/stock-adjustments")
+	{
+		adjustments.GET("", can(auth.ResStockAdjustments, auth.OpRead), adjustmentHandler.List)
+		adjustments.GET("/:id", can(auth.ResStockAdjustments, auth.OpRead), adjustmentHandler.Get)
+		adjustments.POST("", can(auth.ResStockAdjustments, auth.OpCreate), adjustmentHandler.Create)
+		adjustments.PUT("/:id", can(auth.ResStockAdjustments, auth.OpUpdate), adjustmentHandler.Update)
+		adjustments.POST("/:id/approve", can(auth.ResStockAdjustments, auth.OpApprove), adjustmentHandler.Approve)
+		adjustments.POST("/:id/reject", can(auth.ResStockAdjustments, auth.OpReject), adjustmentHandler.Reject)
+	}
 
 	return r
 }
